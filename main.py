@@ -16,12 +16,26 @@ from bs4 import BeautifulSoup
 import requests 
 import datetime
 
+# ---------------- Decorator Setup ------------------
+def debug(decorated_fn): 
+    def inner_fn(*args,**kwargs): 
+        if len(args) == 1:
+            print(args)
+            exists = (lambda x: x.name == args[0], holidays)
+            if exists:
+                print(f'\nSuccess:\n{args[0]} has been removed from the holiday list')
+            else:
+                print(f'\nError: \nInvalid name. Please try again')
+        fn_result = decorated_fn(*args,**kwargs) 
+        return fn_result 
+    return inner_fn
+
 # ---------------- Web Scraping Setup ------------------
 def getHTML(url): 
     response = requests.get(url) 
     return response.text
 url = "https://en.wikipedia.org/wiki/Public_holidays_in_the_United_States"
-html = getHTML("https://en.wikipedia.org/wiki/Public_holidays_in_the_United_States")
+html = getHTML(url)
 
 response = requests.get(url) 
 print(response.status_code)
@@ -105,17 +119,26 @@ def getWikipedia():
             except:
                 continue
 
+# ------------------ API Setup ---------------------
+weather_api_url = 'https://www.metaweather.com/api/location/2452078'
+
 # ----------------- menu functions ------------------------
 # add holiday menu
 def addHolidayMenu():
     print('Add a Holiday\n==========')
     holidayName = input('Holiday Name: ')
-    date = input(f'Date: ')
+    date = input(f'Date [YYYY-MM-DD]: ')
     message = addHoliday(holidayName, date)
     if not message:
         print(f'\nError: \nInvalid date. Please try again')
     else:
         print(f'\nSuccess:\n{holidayName} ({date}) has been added to the holiday list')
+
+# remove holiday menu
+def removeHolidayMenu():
+    print('Remove a Holiday\n==========')
+    holidayName = input('Holiday Name: ')
+    removeHoliday(holidayName)
 
 # view holidays menu
 def viewHolidaysMenu():
@@ -127,6 +150,34 @@ def viewHolidaysMenu():
     else:
         viewHolidays(year, week)
 
+# save holidays list menu
+def saveHolidaysMenu(holidays, prechanged_holidays):
+    print('Saving Holiday List\n==========')
+    confirm = input('Are you sure you want to save your changes? [y/n]: ')
+    if confirm == 'y':
+        message, newholidays = saveHolidays(holidays)
+        if message:
+            holidays = newholidays
+            prechanged_holidays = newholidays
+            print('Success\nYour changes have been saved')
+        else:
+            print('Error\nAn error occurred, please try again.')
+    else:
+        print('Canceled\nHoliday list file save canceled')
+    return holidays, prechanged_holidays
+
+# logic to confirm the exit of holiday entry
+def exitMenu():
+    print('Exit\n=====')
+    if prechanged_holidays == holidays:
+        confirm = input('Are you sure you want to exit? [y/n] ')
+    else:
+        confirm = input('Are you sure you want to exit?\nYour changes will be lost.\n[y/n] ')
+    if confirm == 'y':
+        print('\nGoodbye!')
+        return True
+    else:
+        return False
 # ------------------- actual menu functionality --------------------
 # add holiday to list and check date functionality
 def addHoliday(name, date):
@@ -137,6 +188,13 @@ def addHoliday(name, date):
         return True
     return False
 
+# remove holiday from list using a filter
+@debug
+def removeHoliday(name):
+    filteredHoliday = list(filter(lambda holiday: holiday.name == name, holidays))
+    if len(filteredHoliday) == 1:
+        holidays.remove(filteredHoliday[0])
+
 # function to check week and year args from menu and call getHolidays
 def viewHolidays(*args):
     if len(args) == 2:
@@ -146,7 +204,8 @@ def viewHolidays(*args):
         getHolidays(week, year,False)
     else:
         year = int(args[0])
-        week = 2
+        today = datetime.date.today()
+        week = today.isocalendar()[1]
         weatherValue = input('Would you like to see this week\'s weather? [y/n]: ')
         
         if weatherValue == 'y':
@@ -159,8 +218,25 @@ def viewHolidays(*args):
             print(f'\nThese are the holidays for this week:')
             getHolidays(week, year,False)
 
+# function to update saved holiday list
+def saveHolidays(holidays):
+    try:
+        newHolidays = list()
+        newholidays_dict = {}
+        for holiday in holidays:
+            holiday_dict = {}
+            holiday_dict['name'] = holiday.name
+            holiday_dict['date'] = holiday.date
+            newHolidays.append(holiday_dict)
+        newholidays_dict['holidays'] = newHolidays
+        with open('newholidays.json', 'w') as f:
+            json.dump(newholidays_dict, f)
+        return True, newholidays_dict
+    except:
+        return False, holidays
+
 # function to return list of holidays based on weekNum, year, and weather (T/F)
-# technical requirements says use lambda expressions - TODO
+# technical requirements says use lambda expressions (I did this in removeHoliday though) - TODO
 def getHolidays(*args):
     week = args[0]
     year = args[1]
@@ -168,10 +244,12 @@ def getHolidays(*args):
     for holiday in holidays:
         date_split = holiday.date.split('-')
         weekNum = datetime.date(int(holiday.date.split('-')[0]), int(holiday.date.split('-')[1]), int(holiday.date.split('-')[2])).isocalendar()[1]
-        if not weather:
-            if year == int(date_split[0]) and week == weekNum:
+        if year == int(date_split[0]) and week == weekNum:
+            if not weather:
                 print(holiday)
-        # TODO - call weather API for date if True
+            else:
+                weather_response = requests.get(f'{weather_api_url}/{date_split[0]}/{date_split[1]}/{date_split[2]}/').json()
+                print(f'{holiday} - {weather_response[0]["weather_state_name"]}')
 
 # -------------------- intialize dataclass -----------------------
 @dataclass
@@ -199,6 +277,18 @@ with open('holidays.json') as json_file:
 # load holidays from wikipedia with webscraping
 getWikipedia()
 
+# load (new) holidays from saved newholidays json file
+with open('newholidays.json') as json_file:
+    data = json.load(json_file)
+    for i in range(len(data['holidays'])):
+        # add holiday as dataclass Holiday object
+        holiday = data['holidays'][i]
+        h = Holiday(holiday['name'], holiday['date'])
+        # only get holidays that are not already in list
+        if h not in holidays:
+            holidays.append(h)
+
+prechanged_holidays = holidays.copy()
 # ------------------------- printing / menu ---------------------------
 print('Holiday Management \n ===================')
 print(f'There are {len(holidays)} holidays stored in the system.')
@@ -207,27 +297,26 @@ print(f'There are {len(holidays)} holidays stored in the system.')
 exit = False
 while not exit:
     # print menu options
-    print('\n\nHoliday Menu\n================')
-    print('1. Add a Holiday')
-    print('2. Remove a Holiday')
-    print('3. Save Holiday List')
-    print('4. View Holidays')
-    print('5. Exit')
-    selection = int(input('Enter the number of the menu option you want '))
-    print('\n\n')
-    # if exit
-    if selection == 5:
-        print('Exit\n=====')
-        confirm = input('Are you sure you want to exit? [y/n] ')
-        if confirm == 'y':
-            print('\nGoodbye!')
-            exit = True
-    elif selection == 1:
-        addHolidayMenu()
-    elif selection == 2:
-        print('Remove a Holiday\n==========')
-    elif selection == 3:
-        print('Saving Holiday List\n==========')
-    elif selection == 4:
-        viewHolidaysMenu()
+    try:
+        print('\n\nHoliday Menu\n================')
+        print('1. Add a Holiday')
+        print('2. Remove a Holiday')
+        print('3. Save Holiday List')
+        print('4. View Holidays')
+        print('5. Exit')
+        selection = int(input('Enter the number of the menu option you want '))
+        print('\n\n')
+        # if exit
+        if selection == 5:
+            exit = exitMenu()
+        elif selection == 1:
+            addHolidayMenu()
+        elif selection == 2:
+            removeHolidayMenu()
+        elif selection == 3:
+            holidays, prechanged_holidays = saveHolidaysMenu(holidays, prechanged_holidays)
+        elif selection == 4:
+            viewHolidaysMenu()
+    except:
+        print('Not a valid input, try again')
             
